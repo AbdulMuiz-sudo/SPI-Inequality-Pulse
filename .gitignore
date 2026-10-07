@@ -1,0 +1,11 @@
+__pycache__/
+*.pyc
+.env
+.venv/
+.vscode/
+
+data/raw/*
+!data/raw/pbs/
+!data/raw/wfp/
+
+data/samples/wfp/*.csv
