@@ -1,11 +1,19 @@
+# Python & Environments
 __pycache__/
 *.pyc
 .env
 .venv/
 .vscode/
 
-data/raw/*
-!data/raw/pbs/
-!data/raw/wfp/
+# Databricks
+.databricks/
 
-data/samples/wfp/*.csv
+# Ignore all files inside the raw data folders, but keep the folders themselves
+data/raw/pbs/*
+!data/raw/pbs/.gitkeep
+data/raw/wfp/*
+!data/raw/wfp/.gitkeep
+
+# Ignore large WFP data specifically 
+data/samples/wfp_sample.csv
+*.csv
