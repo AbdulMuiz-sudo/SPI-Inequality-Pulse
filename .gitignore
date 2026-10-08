@@ -14,6 +14,9 @@ data/raw/pbs/*
 data/raw/wfp/*
 !data/raw/wfp/.gitkeep
 
-# Ignore large WFP data specifically 
-data/samples/wfp_sample.csv
+# Ignore all CSVs globally to prevent accidental large uploads
 *.csv
+
+# EXCEPTIONS: Allow any CSVs inside the samples folders to be pushed naturally
+!data/samples/*.csv
+!data/samples/wfp/*.csv
