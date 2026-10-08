@@ -5,18 +5,26 @@ __pycache__/
 .venv/
 .vscode/
 
-# Databricks
+# Databricks & System
 .databricks/
+.DS_Store
+Thumbs.db
 
-# Ignore all files inside the raw data folders, but keep the folders themselves
-data/raw/pbs/*
-!data/raw/pbs/.gitkeep
+# Office / Excel temporary lock files
+~$*.xlsx
+
+# Ignore all files inside raw WFP (large bulk data)
 data/raw/wfp/*
 !data/raw/wfp/.gitkeep
 
-# Ignore all CSVs globally to prevent accidental large uploads
+# Raw PBS: Keep the directory and ignore non-Excel junk, but track fetched reports
+data/raw/pbs/*
+!data/raw/pbs/.gitkeep
+!data/raw/pbs/*.xlsx
+
+# Ignore all CSVs globally (blocks full WFP downloads & local temp files)
 *.csv
 
-# EXCEPTIONS: Allow any CSVs inside the samples folders to be pushed naturally
+# EXCEPTIONS: Allow small test samples in samples folders
 !data/samples/*.csv
-!data/samples/wfp/*.csv
+!data/samples/**/*.csv
