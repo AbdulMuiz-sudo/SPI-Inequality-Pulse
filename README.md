@@ -1,31 +1,93 @@
-# SPI Inequality Pulse: Tracking Inflation's Real Impact
+# SPI Inequality Pulse
 
-Inflation is rarely experienced equally. A standard 15% national inflation rate might mean a minor budget adjustment for the top income bracket, but it can represent a devastating loss of purchasing power for the lowest-income households. 
+A Medallion Lakehouse (Bronze -> Silver) on Databricks that tracks how inflation hits different income groups in Pakistan. It combines the weekly **Sensitive Price Indicator (SPI)** from the Pakistan Bureau of Statistics (PBS) with **WFP** global food prices.
 
-This project builds a robust data engineering pipeline to uncover that reality. By combining Pakistan's official Weekly Sensitive Price Indicator (SPI) with World Food Programme (WFP) global market data, this Medallion Lakehouse tracks how price hikes, price dispersion, and subsidies specifically impact different income groups across Pakistan's urban centers.
+## Repository structure
+```
+notebooks/   Schemas, bronzewfp, silverwfp, bronzepbs, silverpbs, pipelinerunner, validation
+src/         fetch_pbs.py, fetch_wfp.py, common.py   (download files and upload them to the Databricks volume)
+.github/     weekly GitHub Actions schedule for the fetch scripts
+data/samples sample input files
+```
 
-## The Architecture
-The project uses a standard Medallion architecture built on **Databricks** (Serverless Free Edition) and **PySpark**, ensuring idempotent data processing and strict audit logging.
+## How it works
+| Step | Notebook | What it does |
+|---|---|---|
+| Setup | `Schemas` | Creates every table with explicit column types |
+| Raw -> Bronze | `bronzewfp`, `bronzepbs` | Loads raw files as text, adds source and batch info |
+| Bronze -> Silver | `silverwfp`, `silverpbs` | Cleans, converts types, removes duplicates, quarantines bad rows, `MERGE INTO` |
+| Orchestration | `pipelinerunner` | Runs everything in order with the parameters below |
+| Tests | `validation` | Data-quality and idempotency checks (PASS/FAIL) |
 
-*   **Data Ingestion (External):** GitHub Actions orchestrate weekly fetches of raw Excel reports and CSVs, landing them in a structured directory.
-*   **Bronze Layer (Raw & Untyped):** Raw tabular data is ingested directly into Delta tables as strings. This prevents schema-inference crashes caused by the complex narrative headers often found in government reports.
-*   **Silver Layer (Cleaned & Conformed):** Data is parsed using safe casting (`try_cast`) to filter out text, structured into strict schemas, and merged. WFP data uses `MERGE INTO` for true upserts, while PBS data relies on `replaceWhere` for idempotent weekly partition replacements.
-*   **Gold Layer (Analytics - *Upcoming*):** Aggregated views tracking the week-over-week purchasing power parity of Pakistan's five income quintiles.
+Raw files live in the volume `/Volumes/workspace/default/spi_data/samples/`: the WFP CSV (`wfpvam_foodprices.csv`) and the PBS weekly files (`SPI_Report_dd-mm-yyyy.xlsx`, `SPI_Annexure_dd-mm-yyyy.xlsx`).
 
-## Data Sources
-1.  **Pakistan Bureau of Statistics (PBS):** Weekly SPI reports detailing price changes for 51 essential items across 17 cities and 5 income quintiles.
-2.  **World Food Programme (WFP):** Global food price databases used as a regional benchmark for commodity prices.
+## How to run
+**First time:** pull this repo as a Databricks Git folder, upload the raw files to the volume, open `pipelinerunner`, set `reset_tables = yes` and run all (use `reset_tables = no` afterwards).
 
-## Repository Structure
-*   `/notebooks`: PySpark code handling the Bronze and Silver transformations, alongside the master orchestrator.
-*   `/data/samples`: Sample files for local testing and pipeline verification.
-*   `/docs`: Data dictionaries and schema definitions.
-*   `/src`: Python scripts for external data fetching.
-*   `.github/workflows`: CI/CD and automated scraping schedules.
+**Normal incremental load:** `load_type = incremental`, leave `target_dates` blank, run all. The WFP file is skipped if unchanged, and only PBS weeks that are not in Silver yet are processed.
 
-## Running the Pipeline
-The pipeline is orchestrated via the `pipelinerunner` notebook to manage Databricks Free Tier concurrency limits.
+**Backfill an older period:** `load_type = full_backfill` and either
+* `start_date = 01.07.2026`, `end_date = 30.09.2026` (all weeks in that window), or
+* `target_dates = 24.09.2026,01.10.2026` (specific weeks).
 
-1.  **Incremental Weekly Load:** Pass the target week's date (e.g., `24.09.2026`) into the master orchestrator. The pipeline will process the new files and append/upsert them safely.
-2.  **Historical Backfills:** Pass any historical date into the orchestrator. Because the writes are idempotent, it will safely recalculate and replace that specific week's data without corrupting the rest of the historical log or duplicating rows.
+No code changes are needed. Re-running any period is safe: Bronze replaces that file or week, Silver `MERGE INTO` changes nothing if the data is the same.
 
+Each notebook can also run alone: `bronzewfp` (`wfp_file_path`, `load_type`, `batch_id`), `silverwfp` (`countries`, `lookback_months`, ...), `bronzepbs` and `silverpbs` (`week_ending_dates`, `base_dir`, ...).
+
+## Data models
+All tables are in `workspace.default`. Every Bronze and Silver table has `load_timestamp` (TIMESTAMP).
+
+### Bronze
+**`bronze_wfp_raw`**, PK `source_file, adm0_id, mkt_id, cm_id, pt_id, um_id, mp_year, mp_month`
+| Column | Type |
+|---|---|
+| adm0_id, adm0_name, adm1_id, adm1_name, mkt_id, mkt_name, cm_id, cm_name, cur_id, cur_name, pt_id, pt_name, um_id, um_name, mp_month, mp_year, mp_price, mp_commoditysource | STRING |
+| extra_json (unexpected columns), source_file, source_file_signature, batch_id, load_type | STRING |
+| load_timestamp | TIMESTAMP |
+
+**`bronze_pbs_report`**, **`bronze_pbs_annex`** (raw Excel cells), PK `week_ending_date, sheet_name, row_idx`
+| Column | Type |
+|---|---|
+| week_ending_date (dd.mm.yyyy), source_file, sheet_name, c00 ... c24, extra_json, batch_id, load_type | STRING |
+| row_idx (Excel row number) | INT |
+| load_timestamp | TIMESTAMP |
+
+### Silver
+**`silver_wfp_price_observation`**, PK `country, market, commodity_name, unit, price_type, price_date`
+| Column | Type |
+|---|---|
+| country, admin_region, market, commodity_name, category, unit, price_type, currency, ingestion_batch_id, source_file | STRING |
+| price | DOUBLE |
+| price_date | DATE |
+| is_revised_flag | BOOLEAN |
+| load_timestamp, last_updated_timestamp | TIMESTAMP |
+
+**`silver_quintile_index`**, PK `week_ending_date, quintile` (Q1-Q5 and Combined)
+| Column | Type |
+|---|---|
+| quintile, income_band, source_file, batch_id | STRING |
+| index_value, index_prev_week, index_prev_year, pct_change_wow, pct_change_yoy | DOUBLE |
+| week_ending_date | DATE |
+| load_timestamp | TIMESTAMP |
+
+**`silver_item_weight_impact`**, PK `week_ending_date, item_name`
+| Column | Type |
+|---|---|
+| item_name, unit, price_direction, source_file, batch_id | STRING |
+| price_current, price_prev_week, price_prev_year, pct_change_wow, pct_change_yoy, weight_lowest, weight_combined, impact_lowest, impact_combined | DOUBLE |
+| week_ending_date | DATE |
+| load_timestamp | TIMESTAMP |
+
+**`silver_city_price_observation`**, PK `week_ending_date, item_sl, city_code`
+| Column | Type |
+|---|---|
+| week_ending_date | DATE |
+| item_sl | INT |
+| item_name, unit, city, city_code, source_file, batch_id | STRING |
+| min_price, avg_price, max_price, price_dispersion_pct | DOUBLE |
+| load_timestamp | TIMESTAMP |
+
+### Operations
+**`pipeline_execution_logs`**, PK `log_id`: log_id, batch_id, load_type, layer, file_processed, target_table, status (`Success`, `Warning`, `Skipped`, `Failure`), message, error_message (STRING); start_time, end_time (TIMESTAMP); rows_read, rows_inserted, rows_updated, rows_quarantined (BIGINT).
+
+**`quarantine_records`**, PK `quarantine_id`: quarantine_id, batch_id, layer, source_file, record_ref, reason, record_json (STRING); quarantined_at (TIMESTAMP).
