@@ -4,6 +4,7 @@ __pycache__/
 .env
 .venv/
 .vscode/
+localTestPlace
 
 # Databricks & System
 .databricks/
@@ -24,6 +25,11 @@ data/raw/pbs/*
 
 # Ignore all CSVs globally (blocks full WFP downloads & local temp files)
 *.csv
+
+context.md
+SPI_dashboard_reviewed
+SPI_dashboard_reviewed_p2edit.zip
+SPI_dashboard_reviewed.zip
 
 # EXCEPTIONS: Allow small test samples in samples folders
 !data/samples/*.csv
